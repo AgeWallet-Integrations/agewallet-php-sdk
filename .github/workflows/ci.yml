@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer run on the same branch or pull request cancels the older one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    # Runs on the organisation repo only, never on personal forks.
+    if: github.repository == 'AgeWallet-Integrations/agewallet-php-sdk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, json, dom, libxml, mbstring, xml, xmlwriter
+          coverage: ${{ matrix.php == '8.4' && 'pcov' || 'none' }}
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --no-check-lock --strict
+
+      # composer.lock pins packages that need PHP 8.1, so each PHP version resolves its own.
+      - name: Install dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Lint
+        run: find src tests autoload.php -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Test
+        if: matrix.php != '8.4'
+        run: vendor/bin/phpunit
+
+      - name: Test with coverage
+        if: matrix.php == '8.4'
+        run: |
+          vendor/bin/phpunit --coverage-text=coverage.txt
+          { echo '### Coverage'; echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # One check for the main ruleset to require: passes only when every PHP version passed.
+  tests:
+    name: Tests
+    if: always() && github.repository == 'AgeWallet-Integrations/agewallet-php-sdk'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All PHP versions passed
+        run: test "${{ needs.test.result }}" = "success"

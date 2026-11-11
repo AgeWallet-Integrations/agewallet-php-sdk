@@ -25,6 +25,10 @@ class ClientGatingTest extends TestCase
             'redirect_uri' => 'http://localhost/callback',
             'hmac_secret' => 'test-hmac'
         ];
+
+        // Clear superglobals before each test
+        $_GET = [];
+        $_COOKIE = [];
     }
 
     public function testProtectExecutesContentWhenVerified(): void
@@ -44,6 +48,39 @@ class ClientGatingTest extends TestCase
         $this->assertStringContainsString('aw-gate-wrapper', $result);
         // FIX: Expect URL encoded redirect_uri
         $this->assertStringContainsString('http%3A%2F%2Flocalhost%2Fcallback', $result);
+    }
+
+    public function testProtectDoesNotRunContentWhenUnverified(): void
+    {
+        $ran = false;
+        $client = new Client($this->config, $this->session, $this->security);
+
+        $result = $client->protect(function () use (&$ran) {
+            $ran = true;
+            return "Secret Content";
+        });
+
+        $this->assertStringContainsString('aw-gate-wrapper', $result);
+        $this->assertFalse($ran);
+    }
+
+    public function testProtectReturnsCustomGateWhenUnverified(): void
+    {
+        $ran = false;
+        $client = new Client($this->config, $this->session, $this->security);
+
+        $result = $client->protect(
+            function () use (&$ran) {
+                $ran = true;
+                return "Secret Content";
+            },
+            function () {
+                return "Custom Gate";
+            }
+        );
+
+        $this->assertSame("Custom Gate", $result);
+        $this->assertFalse($ran);
     }
 
     public function testGuardStopsExecutionWhenUnverified(): void
@@ -78,13 +115,11 @@ class ClientGatingTest extends TestCase
         $this->session->set('aw_verified', true);
         $client = new Client($this->config, $this->session, $this->security);
 
+        $this->expectOutputString("Buffered Content");
+
         $client->bufferStart();
         echo "Buffered Content";
-        ob_start();
         $client->bufferEnd();
-        $output = ob_get_clean();
-
-        $this->assertEquals("Buffered Content", $output);
     }
 
     public function testBufferingOutputsGateWhenUnverified(): void
